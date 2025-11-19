@@ -25,7 +25,6 @@ import {useUrlData} from "@/hooks/useUrlData";
 import {MCPTool} from "@/types/mcp";
 import useMCPTools from "@/hooks/useMCPTools";
 import {FileSystemStatus} from "./components/FileSystemStatus";
-import {handleFileSystemEvent, isFileSystemEvent} from "../utils/fileSystemEventHandler";
 
 type AttachmentWithLocal = {
     id: string;
@@ -39,13 +38,6 @@ type AttachmentWithLocal = {
 type WeMessages = (Message & {
     experimental_attachments?: AttachmentWithLocal[];
 })[]
-type TextUIPart = {
-    type: 'text';
-    /**
-     * The text content.
-     */
-    text: string;
-};
 const ipcRenderer = window?.electron?.ipcRenderer;
 export const excludeFiles = [
     "components/weicon/base64.js",
@@ -517,10 +509,12 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
         }
     }, [finalizeAssistantMessage, scrollToBottom]);
 
-    const { sendMessage: sendWebSocketMessage, disconnect } = useChatWebSocket(chatWebSocketUrl, {
+    const webSocketHandlers = useMemo(() => ({
         onMessage: handleAssistantStream,
         onError: handleWebSocketError,
-    });
+    }), [handleAssistantStream, handleWebSocketError]);
+
+    const { sendMessage: sendWebSocketMessage, disconnect } = useChatWebSocket(chatWebSocketUrl, webSocketHandlers);
 
     const buildToolsPayload = useCallback(() => {
         if (!baseModal.functionCall || mcpTools.length === 0) {
