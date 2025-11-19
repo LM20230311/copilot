@@ -531,7 +531,7 @@ export const useSSEConnection = (
 export const useChatWebSocket = (
   wsUrl: string,
   options?: {
-    onMessage?: (message: Message) => void;
+    onMessage?: (message: Message, meta?: { isFinal?: boolean; rawEvent?: any }) => void;
     onStatusChange?: (status: ConnectionStatus) => void;
     onError?: (error: Error | Event) => void;
     reconnectInterval?: number;
@@ -602,15 +602,22 @@ export const useChatWebSocket = (
 
               // 通知外部组件更新消息
               if (options?.onMessage && currentAssistantMessageRef.current) {
-                options.onMessage(currentAssistantMessageRef.current);
+                options.onMessage(currentAssistantMessageRef.current, {
+                  isFinal: false,
+                  rawEvent: data,
+                });
               }
             }
 
             // 检查是否是完成消息
             if (data.type === 'done' || data.finishReason) {
               if (currentAssistantMessageRef.current && options?.onMessage) {
-                options.onMessage(currentAssistantMessageRef.current);
+                options.onMessage(currentAssistantMessageRef.current, {
+                  isFinal: true,
+                  rawEvent: data,
+                });
               }
+              setIsConnecting(false);
               currentAssistantMessageRef.current = null;
             }
 
@@ -642,6 +649,11 @@ export const useChatWebSocket = (
       tools?: any[];
     }
   ) => {
+    console.log('[ChatWebSocket] sendMessage 调用', {
+      payloadMessages: requestBody.messages?.length,
+      hasManager: Boolean(connectionManagerRef.current),
+      currentStatus: connectionManagerRef.current?.getStatus?.(),
+    });
     // 使用 ref 获取最新的连接管理器
     const manager = connectionManagerRef.current;
     
@@ -666,6 +678,10 @@ export const useChatWebSocket = (
       // 如果未连接，尝试连接
       if (!currentManager.isConnected()) {
         setIsConnecting(true);
+        console.log('[ChatWebSocket] 初始化分支触发连接', {
+          wsUrl,
+          status: currentManager.getStatus?.(),
+        });
         currentManager.connect();
         
         // 等待连接建立（最多等待 5 秒）
@@ -704,6 +720,10 @@ export const useChatWebSocket = (
     // 如果未连接，尝试连接
     if (!manager.isConnected()) {
       setIsConnecting(true);
+      console.log('[ChatWebSocket] 发送分支触发连接', {
+        wsUrl,
+        status: manager.getStatus?.(),
+      });
       manager.connect();
       
       // 等待连接建立（最多等待 5 秒）

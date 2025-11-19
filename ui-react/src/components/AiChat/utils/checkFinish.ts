@@ -8,7 +8,11 @@ import {TFunction} from "i18next";
  * @param text - Input text content
  * @returns Returns true if boltArtifact tags are properly closed, false otherwise
  */
-export const checkFinish = (text: string, append?: (message: Message | CreateMessage, chatRequestOptions?: ChatRequestOptions) => Promise<string | null | undefined>, t?: TFunction): boolean => {
+export const checkFinish = (
+  text: string,
+  append?: (message: Message | CreateMessage, chatRequestOptions?: ChatRequestOptions) => Promise<string | null | undefined> | void,
+  t?: TFunction
+): boolean => {
   const openCount = (text.match(/<boltArtifact/g) || []).length;
   const closeCount = (text.match(/<\/boltArtifact>/g) || []).length;
 

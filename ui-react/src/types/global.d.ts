@@ -8,6 +8,7 @@ declare global {
     Posthog: PostHog
     fileHashMap: Map<string, string>;
     modal: HookAPI
+    electron?: any;
   }
 }
 

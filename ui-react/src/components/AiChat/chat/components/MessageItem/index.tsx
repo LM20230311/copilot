@@ -49,21 +49,30 @@ const codeStyles = `
 `;
 
 function filterContent(message) {
-  let cloneMessage
-  if (message.role === 'user') {
-    cloneMessage = JSON.parse(JSON.stringify(message))
-    // 使用正则表达式移除<weD2c>标签及其内容，添加 s 标志以匹配多行内容
-    const weD2cRegex = /<weD2c>[\s\S]*?<\/weD2c>/g;
-    cloneMessage.content = cloneMessage.content.replace(weD2cRegex, '');
-    cloneMessage.parts = cloneMessage.parts.map(item => {
-      if(item.type === 'text'){
-        item.text = item.text.replace(weD2cRegex, '')
-        return item
-      }
-      return item
-    })
+  if (!message || message.role !== 'user') {
+    return message;
   }
-  return cloneMessage ? cloneMessage : message;
+
+  const cloneMessage = JSON.parse(JSON.stringify(message));
+  const weD2cRegex = /<weD2c>[\s\S]*?<\/weD2c>/g;
+
+  if (typeof cloneMessage.content === 'string') {
+    cloneMessage.content = cloneMessage.content.replace(weD2cRegex, '');
+  }
+
+  if (Array.isArray(cloneMessage.parts)) {
+    cloneMessage.parts = cloneMessage.parts.map((item) => {
+      if (item?.type === 'text' && typeof item.text === 'string') {
+        return {
+          ...item,
+          text: item.text.replace(weD2cRegex, ''),
+        };
+      }
+      return item;
+    });
+  }
+
+  return cloneMessage;
 }
 // 添加处理流式parts的函数
 export const processStreamParts = (parts: Message["parts"]): string => {
@@ -109,10 +118,10 @@ interface MessageItemProps {
     experimental_attachments?: Array<{
       id: string;
       name: string;
-      type: string;
-      localUrl: string;
-      contentType: string;
-      url: string;
+      type?: string;
+      localUrl?: string;
+      contentType?: string;
+      url?: string;
     }>;
   };
   isLoading: boolean;

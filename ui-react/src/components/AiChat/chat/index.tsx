@@ -1,5 +1,5 @@
-import {useEffect, useMemo, useRef, useState} from "react";
-import {Message, useChat} from "ai/react";
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {Message} from "ai/react";
 import {toast} from "react-toastify";
 import {uploadImage} from "@/api/chat";
 import useChatStore from "../../../stores/chatSlice";
@@ -14,7 +14,7 @@ import {parseMessage} from "../../../utils/messagepParseJson";
 import useUserStore from "../../../stores/userSlice";
 import {useLimitModalStore} from "../../UserModal";
 import {updateFileSystemNow} from "../../WeIde/services";
-import {parseMessages} from "../useMessageParser";
+import {parseMessages, useChatWebSocket} from "../useMessageParser";
 import {createMpIcon} from "@/utils/createWtrite";
 import {useTranslation} from "react-i18next";
 import { apiUrl } from "@/api/base";
@@ -27,15 +27,17 @@ import useMCPTools from "@/hooks/useMCPTools";
 import {FileSystemStatus} from "./components/FileSystemStatus";
 import {handleFileSystemEvent, isFileSystemEvent} from "../utils/fileSystemEventHandler";
 
+type AttachmentWithLocal = {
+    id: string;
+    name: string;
+    type?: string;
+    localUrl?: string;
+    contentType?: string;
+    url?: string;
+};
+
 type WeMessages = (Message & {
-    experimental_attachments?: Array<{
-        id: string;
-        name: string;
-        type: string;
-        localUrl: string;
-        contentType: string;
-        url: string;
-    }>
+    experimental_attachments?: AttachmentWithLocal[];
 })[]
 type TextUIPart = {
     type: 'text';
@@ -189,13 +191,6 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
                 initConvertToBoltAction &&
                 mode === ChatMode.Builder)
         ) {
-            setMessagesa([
-                {
-                    id: "1",
-                    role: "user",
-                    content: `<boltArtifact id="hello-js" title="the current file">\n${initConvertToBoltAction}\n</boltArtifact>\n\n`,
-                },
-            ]);
             setMessages([
                 {
                     id: "1",
@@ -235,6 +230,43 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
     const [chatUuid, setChatUuid] = useState(() => propUuid || uuidv4());
 
     const refUuidMessages = useRef([]);
+    const [userScrolling, setUserScrolling] = useState(false);
+    const userScrollTimeoutRef = useRef<NodeJS.Timeout>();
+
+    // 处理用户滚动
+    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLDivElement;
+        const isScrolledToBottom = Math.abs(target.scrollHeight - target.scrollTop - target.clientHeight) < 10;
+
+        if (!isScrolledToBottom) {
+            setUserScrolling(true);
+
+            if (userScrollTimeoutRef.current) {
+                clearTimeout(userScrollTimeoutRef.current);
+            }
+
+            userScrollTimeoutRef.current = setTimeout(() => {
+                setUserScrolling(false);
+            }, 3000);
+        }
+    };
+
+    const scrollToBottom = useCallback(() => {
+        if (userScrolling) return;
+
+        const messageContainer = document.querySelector('.message-container');
+        if (messageContainer) {
+            messageContainer.scrollTop = messageContainer.scrollHeight;
+        }
+    }, [userScrolling]);
+
+    useEffect(() => {
+        return () => {
+            if (userScrollTimeoutRef.current) {
+                clearTimeout(userScrollTimeoutRef.current);
+            }
+        };
+    }, []);
 
     useEffect(() => {
         if (checkCount >= 1) {
@@ -272,7 +304,7 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
                             content: `<boltArtifact id="hello-js" title="the current file">\n${convertToBoltAction(historyFiles)}\n</boltArtifact>\n\n`,
                         });
                     }
-                    setMessages(latestRecord.data.messages);
+                    setMessages(latestRecord.data.messages as WeMessages);
                     setFiles(historyFiles);
                     setOldFiles(oldHistoryFiles);
                     // 重置其他状态
@@ -339,7 +371,12 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
     const token = useUserStore.getState().token;
     const {openModal} = useLimitModalStore();
 
-    const [messages, setMessagesa] = useState<WeMessages>([]);
+    const [messages, setMessages] = useState<WeMessages>([]);
+    const [input, setInput] = useState("");
+    const [isLoading, setIsLoading] = useState(false);
+    const handleInputChange = useCallback((event: React.ChangeEvent<HTMLTextAreaElement>) => {
+        setInput(event.target.value);
+    }, []);
     const {enabledMCPs} = useMCPTools()
 
     const [mcpTools, setMcpTools] = useState<MCPTool[]>([])
@@ -348,132 +385,180 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
         setMcpTools([])
     }, [enabledMCPs])
 
-    // 自定义 fetch 函数来处理流数据
-    const customFetch = async (url: string, options: any) => {
-        try {
-            const response = await fetch(url, options);
+    const chatWebSocketUrl = useMemo(() => {
+        const backendBase =
+            process.env.APP_BASE_URL ||
+            process.env.APP_WS_BASE_URL ||
+            process.env.VITE_PROXY_TARGET ||
+            "";
 
-            // 如果不是流式响应，直接返回
-            if (!response.body) {
-                return response;
+        const configuredUrl = (() => {
+            if (process.env.APP_WS_BASE_URL) {
+                return process.env.APP_WS_BASE_URL;
+            }
+            if (backendBase) {
+                const normalizedBase = backendBase.endsWith("/")
+                    ? backendBase.slice(0, -1)
+                    : backendBase;
+                return `${normalizedBase}/api/chat/ws`;
+            }
+            return apiUrl("/api/chat/ws");
+        })();
+
+        const resolveAbsoluteUrl = (target: string) => {
+            if (target.startsWith('ws')) return target;
+            if (target.startsWith('http')) {
+                return target.replace(/^http/, 'ws');
+            }
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const normalized = target.startsWith('/') ? target : `/${target}`;
+            return `${protocol}//${window.location.host}${normalized}`;
+        };
+
+        const resolved = resolveAbsoluteUrl(configuredUrl);
+        if (token) {
+            try {
+                const url = new URL(resolved);
+                url.searchParams.set('token', token);
+                return url.toString();
+            } catch (error) {
+                console.warn('[ChatWebSocket] URL 解析失败，回退为原始地址', error);
+            }
+        }
+        return resolved;
+    }, [token]);
+
+    const handleWebSocketError = useCallback((error: Error | Event) => {
+        const message = (error as Error)?.message || String(error);
+        console.error('[ChatWebSocket] 连接错误:', error);
+        setIsLoading(false);
+        toast.error(message);
+        if (message.includes("Quota not enough")) {
+            openModal('limit');
+        }
+        if (message.includes("Authentication required")) {
+            openModal("login");
+        }
+    }, [openModal]);
+
+    const finalizeAssistantMessage = useCallback(async (updatedMessages: WeMessages) => {
+        clearImages();
+        scrollToBottom();
+        setIsLoading(false);
+
+        try {
+            const needParseMessages = updatedMessages.filter(
+                (m) => !refUuidMessages.current.includes(m.id)
+            );
+
+            if (needParseMessages.length) {
+                refUuidMessages.current = [
+                    ...refUuidMessages.current,
+                    ...needParseMessages.map((m) => m.id),
+                ];
+                await parseMessages(needParseMessages);
             }
 
-            // 创建一个新的 ReadableStream 来拦截数据
-            const originalStream = response.body;
-            const reader = originalStream.getReader();
-            let chunkCount = 0;
-
-            const stream = new ReadableStream({
-                start(controller) {
-                    function pump(): Promise<void> {
-                        return reader.read().then(({ done, value }) => {
-                            if (done) {
-                                controller.close();
-                                return;
-                            }
-
-                            chunkCount++;
-
-                            // 转换 OpenAI SSE 格式为 AI SDK 期望的格式
-                            const text = new TextDecoder().decode(value);
-
-                            let transformedText = '';
-
-                            if (text.trim()) {
-                                const lines = text.split('\n').filter(line => line.trim());
-
-                                for (const line of lines) {
-                                    if (line.startsWith('data:')) {
-                                        const dataContent = line.slice(5).trimStart();
-
-                                        if (dataContent === '[DONE]') {
-                                            transformedText += 'data: [DONE]\n\n';
-                                            continue;
-                                        }
-
-                                        try {
-                                            const parsed = JSON.parse(dataContent);
-
-                                            // 处理后端自定义的文件系统事件
-                                            if (parsed && parsed.type === 'fileSystem' && parsed.data && parsed.data.files) {
-                                                try {
-                                                    const files = parsed.data.files as Record<string, string>;
-                                                    for (const [filePath, fileContent] of Object.entries(files)) {
-                                                        // 将服务端文件内容同步到前端文件存储
-                                                        updateContent(filePath, fileContent);
-                                                    }
-                                                } catch (syncErr) {
-                                                    console.error('Failed to sync file system event:', syncErr);
-                                                }
-                                                // 不将文件系统事件内容注入到文本消息中
-                                                continue;
-                                            }
-
-                                            // 检查是否是 OpenAI 格式
-                                            if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
-                                                const content = parsed.choices[0].delta.content;
-                                                const finishReason = parsed.choices[0].finish_reason;
-
-                                                if (content) {
-                                                    // 转换为简单的文本格式，让 ai/react 自动处理
-                                                    transformedText += content;
-                                                }
-
-                                                if (finishReason === 'stop') {
-                                                    // 流结束
-                                                    break;
-                                                }
-                                            }
-                                        } catch (e) {
-                                            // 忽略解析错误
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (transformedText) {
-                                controller.enqueue(new TextEncoder().encode(transformedText));
-                            }
-                            return pump();
-                        }).catch(error => {
-                            controller.error(error);
-                        });
-                    }
-                    return pump();
+            const lastMessage = updatedMessages[updatedMessages.length - 1];
+            if (lastMessage?.content) {
+                const parseResult = parseMessage(lastMessage.content);
+                const {files: messagefiles} = parseResult;
+                for (let key in messagefiles) {
+                    await updateContent(key, messagefiles[key], false, true);
                 }
-            });
+            }
 
-            // 返回修改后的响应
-            return new Response(stream, {
-                status: response.status,
-                statusText: response.statusText,
-                headers: response.headers
-            });
+            setIsFirstSend();
+            setIsUpdateSend();
 
+            await db.insert(chatUuid, {
+                messages: updatedMessages,
+                title:
+                    updatedMessages.find(
+                        (m) => m.role === "user" && !m.content.includes("<boltArtifact")
+                    )?.content?.slice(0, 50) || "New Chat",
+            });
         } catch (error) {
-            throw error;
+            console.error('[ChatWebSocket] finalize message error:', error);
         }
-    };
 
-    // 修改 useChat 配置
-    const {
-        messages: realMessages,
-        input,
-        handleInputChange,
-        isLoading,
-        setMessages,
-        append,
-        setInput,
-        stop,
-        reload,
-    } = useChat({
-        api: apiUrl('/api/chat'),
-        fetch: customFetch,
-        streamProtocol: 'text',  // 使用文本流模式
-        headers: {
-            ...(token && {Authorization: `Bearer ${token}`}),
-        },
-        body: {
+        setCheckCount((count) => count + 1);
+    }, [chatUuid, clearImages, parseMessages, scrollToBottom, setIsFirstSend, setIsUpdateSend, updateContent]);
+
+    const handleAssistantStream = useCallback((assistantMessage: Message, meta?: { isFinal?: boolean }) => {
+        if (!assistantMessage) {
+            return;
+        }
+
+        let nextMessagesSnapshot: WeMessages = [];
+        setMessages((prev) => {
+            const assistantEntry: WeMessages[number] = {
+                id: assistantMessage.id || uuidv4(),
+                role: assistantMessage.role || "assistant",
+                content: assistantMessage.content || "",
+            };
+            const existingIndex = prev.findIndex((msg) => msg.id === assistantEntry.id);
+            let nextMessages: WeMessages;
+            if (existingIndex >= 0) {
+                nextMessages = [
+                    ...prev.slice(0, existingIndex),
+                    {...prev[existingIndex], ...assistantEntry},
+                    ...prev.slice(existingIndex + 1),
+                ];
+            } else {
+                nextMessages = [...prev, assistantEntry];
+            }
+            nextMessagesSnapshot = nextMessages;
+            return nextMessages;
+        });
+        scrollToBottom();
+        if (meta?.isFinal && nextMessagesSnapshot.length) {
+            finalizeAssistantMessage(nextMessagesSnapshot);
+        }
+    }, [finalizeAssistantMessage, scrollToBottom]);
+
+    const { sendMessage: sendWebSocketMessage, disconnect } = useChatWebSocket(chatWebSocketUrl, {
+        onMessage: handleAssistantStream,
+        onError: handleWebSocketError,
+    });
+
+    const buildToolsPayload = useCallback(() => {
+        if (!baseModal.functionCall || mcpTools.length === 0) {
+            return undefined;
+        }
+        return mcpTools.map(tool => ({
+            id: tool.id,
+            name: `${tool.serverName}.${tool.name}`,
+            description: tool.description || "",
+            parameters: tool.inputSchema
+        }));
+    }, [baseModal.functionCall, mcpTools]);
+
+    const sendChatRequest = useCallback((conversation: WeMessages) => {
+        if (!conversation.length) {
+            return;
+        }
+
+        console.log("[Chat] 准备发送消息", {
+            mode,
+            conversationLength: conversation.length,
+            wsUrl: chatWebSocketUrl,
+            lastRole: conversation[conversation.length - 1]?.role,
+        });
+
+        const payloadMessages = conversation.map(({experimental_attachments, ...rest}) => ({
+            ...rest,
+            ...(experimental_attachments ? {experimental_attachments} : {}),
+        })) as Message[];
+
+        const body: {
+            messages: Message[];
+            model?: string;
+            mode?: string;
+            otherConfig?: any;
+            tools?: any[];
+        } = {
+            messages: payloadMessages,
             model: baseModal.value,
             mode: mode,
             otherConfig: {
@@ -484,169 +569,79 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
                     backendLanguage: otherConfig.backendLanguage
                 },
             },
-            // 如果模型支持 function call 且有启用的 MCP 工具，则添加 tools 配置
-            ...(baseModal.functionCall && mcpTools.length > 0 && {
-                tools: mcpTools.map(tool => ({
-                    id: tool.id,
-                    name: `${tool.serverName}.${tool.name}`,
-                    description: tool.description || '',
-                    parameters: tool.inputSchema
-                }))
-            })
+        };
 
-        },
+        const tools = buildToolsPayload();
+        if (tools) {
+            body.tools = tools;
+        }
 
+        setIsLoading(true);
+        sendWebSocketMessage(body);
+    }, [baseModal.value, mode, otherConfig, buildToolsPayload, sendWebSocketMessage, chatWebSocketUrl]);
 
-        id: chatUuid,
-        onResponse: async (response) => {
-            // console.log("=== onResponse Debug ===");
-            // console.log("Response status:", response.status);
-            // console.log("Response headers:", Object.fromEntries(response.headers.entries()));
-            // console.log("Model from:", baseModal.from);
-
-            // if (baseModal.from === "ollama") {
-            //     // Ollama 特殊处理 - 需要手动处理流式响应
-            //     console.log("Processing Ollama response manually");
-            //     const reader = response.body?.getReader();
-            //     if (!reader) return;
-
-            //     while (true) {
-            //         const {done, value} = await reader.read();
-            //         if (done) break;
-
-            //         const text = new TextDecoder().decode(value);
-            //         const lines = text.split("\n").filter((line) => line.trim());
-
-            //         for (const line of lines) {
-            //             try {
-            //                 const data = JSON.parse(line);
-            //                 if (data.message?.content) {
-            //                     setMessages((messages) => {
-            //                         const lastMessage = messages[messages.length - 1];
-            //                         if (lastMessage && lastMessage.role === "assistant") {
-            //                             return [
-            //                                 ...messages.slice(0, -1),
-            //                                 {
-            //                                     ...lastMessage,
-            //                                     content: lastMessage.content + data.message.content,
-            //                                 },
-            //                             ];
-            //                         }
-            //                         return [
-            //                             ...messages,
-            //                             {
-            //                                 id: uuidv4(),
-            //                                 role: "assistant",
-            //                                 content: data.message.content,
-            //                             },
-            //                         ];
-            //                     });
-            //                 }
-            //             } catch (e) {
-            //                 console.warn("Failed to parse Ollama response line:", e);
-            //             }
-            //         }
-            //     }
-            // } else {
-            //     // 对于后端返回的 OpenAI 格式，让 customFetch 和 ai/react 库处理
-            //     // customFetch 已经将后端格式转换为 ai/react 期望的格式
-            //     console.log("Backend streaming response - letting customFetch and ai/react handle it");
-            //     console.log("Response will be processed by customFetch transformation");
-            // }
-        },
-        onFinish: async (message) => {
-            clearImages();
-            scrollToBottom();
-
-            try {
-                const needParseMessages = [...messages, message].filter(
-                    (m) => !refUuidMessages.current.includes(m.id)
-                );
-
-                refUuidMessages.current = [
-                    ...refUuidMessages.current,
-                    ...needParseMessages.map((m) => m.id),
-                ];
-
-                // 生成消息完成后，不再默认解析XML
-                // 若需要，可保留作为后备方案（当服务端文件系统不可用时）
-                if (message && message.content) {
-                    const parseResult = parseMessage(message.content);
-                    const {files: messagefiles} = parseResult;
-                    for (let key in messagefiles) {
-                        await updateContent(key, messagefiles[key], false, true);
-                    }
-                }
-
-                setIsFirstSend();
-                setIsUpdateSend();
-
-                let initMessage = [];
-                initMessage = [
-                    {
-                        id: uuidv4(),
-                        role: "user",
-                        content: input,
-                    },
-                ];
-
-                await db.insert(chatUuid, {
-                    messages: [...messages, ...initMessage, message],
-                    title:
-                        [...initMessage, ...messages]
-                            .find(
-                                (m) => m.role === "user" && !m.content.includes("<boltArtifact")
-                            )
-                            ?.content?.slice(0, 50) || "New Chat",
-                });
-            } catch (error) {
-                // 静默处理错误
+    const append = useCallback((
+        message: { role: 'user' | 'assistant'; content: string },
+        options?: { experimental_attachments?: WeMessages[number]['experimental_attachments'] }
+    ) => {
+        let nextMessagesSnapshot: WeMessages = [];
+        setMessages((prev) => {
+            const newMessage: WeMessages[number] = {
+                id: uuidv4(),
+                role: message.role,
+                content: message.content,
+            };
+            if (options?.experimental_attachments) {
+                newMessage.experimental_attachments = options.experimental_attachments;
             }
-            setCheckCount(checkCount => checkCount + 1);
-        },
-        // onError: (error: any) => {
+            const nextMessages = [...prev, newMessage];
+            console.log("[Chat] append", {
+                role: message.role,
+                prevCount: prev.length,
+                nextCount: nextMessages.length,
+            });
+            nextMessagesSnapshot = nextMessages;
+            return nextMessages;
+        });
 
+        if (message.role === "user" && nextMessagesSnapshot.length) {
+            console.log("[Chat] 发送请求", {
+                mode,
+                snapshotLength: nextMessagesSnapshot.length,
+            });
+            sendChatRequest(nextMessagesSnapshot);
+        }
+    }, [mode, sendChatRequest]);
 
+    const stop = useCallback(() => {
+        disconnect();
+        setIsLoading(false);
+    }, [disconnect]);
 
-        //     const msg = error?.errors?.[0]?.responseBody || String(error);
-        //     console.log("error", error, msg);
+    const reload = useCallback(() => {
+        let snapshot: WeMessages | null = null;
+        setMessages((prev) => {
+            let lastUserIndex = -1;
+            for (let i = prev.length - 1; i >= 0; i--) {
+                if (prev[i].role === "user") {
+                    lastUserIndex = i;
+                    break;
+                }
+            }
+            if (lastUserIndex === -1) {
+                snapshot = prev;
+                return prev;
+            }
+            const trimmed = prev.slice(0, lastUserIndex + 1);
+            snapshot = trimmed;
+            return trimmed;
+        });
 
-        //     // 添加更详细的错误日志
-        //     if (String(error).includes("Failed to parse stream string") || String(error).includes("Invalid code data")) {
-        //         console.error("Stream parsing error details:", {
-        //             error,
-        //             message: error.message,
-        //             stack: error.stack,
-        //             cause: error.cause,
-        //             name: error.name
-        //         });
+        if (snapshot && snapshot.length) {
+            sendChatRequest(snapshot);
+        }
+    }, [sendChatRequest]);
 
-        //         // 尝试提供更有用的错误信息
-        //         let userMessage = "数据流解析失败";
-        //         if (String(error).includes("Invalid code data")) {
-        //             userMessage += "：后端返回了无效的编码数据";
-        //         } else if (String(error).includes("Failed to parse stream string")) {
-        //             userMessage += "：无法解析流数据格式";
-        //         }
-        //         userMessage += "，请检查后端返回格式或重试";
-
-        //         toast.error(userMessage);
-        //     } else {
-        //         toast.error(msg);
-        //     }
-
-        //     if (String(error).includes("Quota not enough")) {
-        //         openModal('limit');
-        //     }
-        //     if (String(error).includes("Authentication required")) {
-        //         openModal("login");
-        //     }
-        //     // 添加对 Ollama 错误的处理
-        //     if (baseModal.from === "ollama") {
-        //         toast.error("Ollama 服务器连接失败，请检查配置");
-        //     }
-        // },
-    });
     const {status, type} = useUrlData({append});
 
     // 官网跳转进来监听 url
@@ -656,8 +651,6 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
         }
     }, [status, type]);
 
-
-    const parseTimeRef = useRef(0);
 
     useEffect(() => {
         const visibleFun = () => {
@@ -675,67 +668,14 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
     }, [isLoading, files]);
 
     useEffect(() => {
-        if (Date.now() - parseTimeRef.current > 200 && isLoading) {
-            setMessagesa(realMessages as WeMessages);
-            parseTimeRef.current = Date.now();
-
-            const needParseMessages = messages.filter(
-                (m) => !refUuidMessages.current.includes(m.id)
-            );
-            parseMessages(needParseMessages);
-            scrollToBottom();
-        }
         if (errors.length > 0 && isLoading) {
             clearErrors();
         }
         if (!isLoading) {
-            setMessagesa(realMessages as WeMessages);
             createMpIcon(files);
         }
-    }, [realMessages, isLoading]);
+    }, [errors, isLoading, clearErrors, files]);
 
-    const [userScrolling, setUserScrolling] = useState(false)
-    const userScrollTimeoutRef = useRef<NodeJS.Timeout>()
-
-    // 处理用户滚动
-    const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-        const target = e.target as HTMLDivElement
-        const isScrolledToBottom = Math.abs(target.scrollHeight - target.scrollTop - target.clientHeight) < 10
-
-        if (!isScrolledToBottom) {
-            // 用户正在滚动查看历史消息
-            setUserScrolling(true)
-
-            // 清除之前的定时器
-            if (userScrollTimeoutRef.current) {
-                clearTimeout(userScrollTimeoutRef.current)
-            }
-
-            // 设置新的定时器，3秒后允许自动滚动
-            userScrollTimeoutRef.current = setTimeout(() => {
-                setUserScrolling(false)
-            }, 3000)
-        }
-    }
-
-    // 修改滚动到底部的函数
-    const scrollToBottom = () => {
-        if (userScrolling) return // 如果用户正在滚动，不执行自动滚动
-
-        const messageContainer = document.querySelector('.message-container')
-        if (messageContainer) {
-            messageContainer.scrollTop = messageContainer.scrollHeight
-        }
-    }
-
-    // 在组件卸载时清理定时器
-    useEffect(() => {
-        return () => {
-            if (userScrollTimeoutRef.current) {
-                clearTimeout(userScrollTimeoutRef.current)
-            }
-        }
-    }, [])
 
     // 添加上传状态跟踪
     const [isUploading, setIsUploading] = useState(false);
@@ -795,7 +735,17 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
         _: React.KeyboardEvent,
         text?: string
     ) => {
-        if (!text && !input.trim() && uploadedImages.length === 0) return;
+        if (!text && !input.trim() && uploadedImages.length === 0) {
+            console.warn("[ChatInput] 提交被忽略：内容和附件均为空");
+            return;
+        }
+
+        console.log("[ChatInput] 触发提交", {
+            chatMode: mode,
+            hasManualText: Boolean(text),
+            inputLength: (text ?? input)?.trim()?.length ?? 0,
+            attachments: uploadedImages.length,
+        });
 
         try {
             // 处理文件引用
@@ -1056,7 +1006,7 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
 
             <ChatInput
                 input={input}
-                setMessages={setMessages}
+                setMessages={(nextMessages) => setMessages(nextMessages as WeMessages)}
                 append={append}
                 messages={messages}
                 stopRuning={stop}
