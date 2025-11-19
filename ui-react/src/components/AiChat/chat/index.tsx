@@ -598,13 +598,26 @@ export const BaseChat = ({uuid: propUuid}: { uuid?: string }) => {
             return nextMessages;
         });
 
-        if (message.role === "user" && nextMessagesSnapshot.length) {
-            console.log("[Chat] 发送请求", {
-                mode,
-                snapshotLength: nextMessagesSnapshot.length,
+        const scheduleSend = typeof queueMicrotask === "function"
+            ? queueMicrotask
+            : (fn: () => void) => Promise.resolve().then(fn);
+
+        scheduleSend(() => {
+            console.log("[Chat] append guard check", {
+                role: message.role,
+                nextMessagesLength: nextMessagesSnapshot?.length,
             });
-            sendChatRequest(nextMessagesSnapshot);
-        }
+
+            if (message.role === "user" && nextMessagesSnapshot.length) {
+                console.log("[Chat] 发送请求", {
+                    mode,
+                    snapshotLength: nextMessagesSnapshot.length,
+                });
+                sendChatRequest(nextMessagesSnapshot);
+            } else if (message.role === "user") {
+                console.warn("[Chat] 用户消息未发送：快照为空");
+            }
+        });
     }, [mode, sendChatRequest]);
 
     const stop = useCallback(() => {
