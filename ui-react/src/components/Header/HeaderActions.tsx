@@ -10,6 +10,7 @@ import {useState} from "react";
 import {toast} from "react-toastify";
 import { apiUrl } from "@/api/base";
 import useUserStore from "@/stores/userSlice";
+import { MergeEditorModal } from "../MergeEditor";
 
 
 // 添加一个递归获取文件的辅助函数
@@ -68,6 +69,7 @@ export function HeaderActions() {
   const [showModal, setShowModal] = useState(false);
   const [deployUrl, setDeployUrl] = useState("");
   const [isDeploying, setIsDeploying] = useState(false);
+  const [showMergeEditor, setShowMergeEditor] = useState(false);
   const { isAuthenticated, logout } = useUserStore();
 
   const handleDownload = async () => {
@@ -150,6 +152,28 @@ export function HeaderActions() {
 
   return (
     <div className="flex items-center gap-2">
+      {/* 测试合并编辑器按钮 */}
+      <button
+        onClick={() => setShowMergeEditor(true)}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 rounded-lg transition-colors"
+        title="测试文件冲突解决"
+      >
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M7 4v16l13-8L7 4z"
+          />
+        </svg>
+        <span>合并测试</span>
+      </button>
+
       {mode === ChatMode.Builder && (
         <div className="flex items-center gap-2">
           <button
@@ -297,6 +321,12 @@ export function HeaderActions() {
           </div>
         </div>
       )}
+
+      {/* 合并编辑器测试弹窗 */}
+      <MergeEditorModal
+        open={showMergeEditor}
+        onClose={() => setShowMergeEditor(false)}
+      />
     </div>
   );
 }

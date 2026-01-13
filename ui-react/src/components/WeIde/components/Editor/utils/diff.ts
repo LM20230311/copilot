@@ -10,7 +10,7 @@ interface DiffRange {
   isEmptyLine?: boolean;
 }
 
-interface DiffBlock {
+export interface DiffBlock {
   search: { start: number; end: number };
   replace: { start: number; end: number };
 }
@@ -115,7 +115,7 @@ export const hasDiffContent = (content: string) => {
     content.includes(DIFF_MARKERS.REPLACE)
   );
 };
-const parseDiffBlocks = (doc: string): DiffBlock[] => {
+export const parseDiffBlocks = (doc: string): DiffBlock[] => {
   const lines = doc.split("\n");
   const blocks: DiffBlock[] = [];
   let currentBlock: Partial<DiffBlock> = {};
