@@ -6,17 +6,39 @@ import { Editor } from '../WeIde/components/Editor';
 import { parseDiffBlocks, hasDiffContent } from '../WeIde/components/Editor/utils/diff';
 import { useFileStore } from '../WeIde/stores/fileStore';
 
-// 自定义样式
+// 自定义样式，确保 Modal 内部为 flex 布局并且内容可滚动
 const mergeEditorStyles = `
   .merge-editor-modal .ant-modal-content {
     padding: 0;
     height: 80vh;
     max-height: 80vh;
+    display: flex;
+    flex-direction: column;
   }
 
   .merge-editor-modal .ant-modal-body {
     padding: 0;
+    flex: 1 1 auto;
+    min-height: 0; /* 允许子元素使用 flex 高度约束 */
+    overflow: hidden; /* 由子面板自己负责滚动 */
+  }
+
+  /* PanelGroup 和各面板占满高度，面板内部可滚动 */
+  .merge-editor-modal .panel-group,
+  .merge-editor-modal .panel-group > div {
     height: 100%;
+    min-height: 0;
+  }
+
+  .merge-editor-modal .panel {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .merge-editor-modal .ant-modal-header,
+  .merge-editor-modal .ant-modal-footer {
+    flex: 0 0 auto;
   }
 
   .conflict-highlight-original {
@@ -214,9 +236,9 @@ const ThreePanelMergeEditor: React.FC<ThreePanelMergeEditorProps> = ({
 
       {/* 三栏布局 */}
       <div className="flex-1 min-h-0">
-        <PanelGroup direction="horizontal" className="h-full">
+        <PanelGroup direction="horizontal" className="panel-group h-full">
           {/* 左侧面板 - 原始文件 */}
-          <Panel defaultSize={33} minSize={25}>
+          <Panel defaultSize={33} minSize={25} className="panel">
             <div className="h-full flex flex-col">
               <div className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
                 <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -275,7 +297,7 @@ const ThreePanelMergeEditor: React.FC<ThreePanelMergeEditorProps> = ({
           <PanelResizeHandle className="w-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors" />
 
           {/* 中间面板 - 合并结果 */}
-          <Panel defaultSize={34} minSize={25}>
+          <Panel defaultSize={34} minSize={25} className="panel">
             <div className="h-full flex flex-col">
               <div className="px-3 py-2 bg-blue-50 dark:bg-blue-900 border-b border-blue-200 dark:border-blue-700">
                 <h4 className="text-sm font-medium text-blue-700 dark:text-blue-300">
@@ -294,7 +316,7 @@ const ThreePanelMergeEditor: React.FC<ThreePanelMergeEditorProps> = ({
           <PanelResizeHandle className="w-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors" />
 
           {/* 右侧面板 - 新文件 */}
-          <Panel defaultSize={33} minSize={25}>
+          <Panel defaultSize={33} minSize={25} className="panel">
             <div className="h-full flex flex-col">
               <div className="px-3 py-2 bg-green-50 dark:bg-green-900 border-b border-green-200 dark:border-green-700">
                 <h4 className="text-sm font-medium text-green-700 dark:text-green-300">
