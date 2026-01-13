@@ -1,10 +1,14 @@
+import { useEffect } from "react";
 import {ProjectTitle} from "./ProjectTitle";
 import {HeaderActions} from "./HeaderActions";
 import {FaCode} from "react-icons/fa6";
 
 function Header() {
+  useEffect(() => {
+    console.log('[Header] mounted');
+  }, []);
   return (
-    <header className="min-h-12 flex items-center px-4 h-12 bg-white dark:bg-[#18181a] border-b border-gray-200 dark:border-[#333333]">
+    <header id="app-header" className="min-h-12 flex items-center px-4 h-12 bg-white dark:bg-[#18181a] border-b border-gray-200 dark:border-[#333333]">
       <div className="flex-1">
         <ProjectTitle />
       </div>

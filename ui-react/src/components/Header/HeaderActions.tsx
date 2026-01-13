@@ -6,10 +6,11 @@ import useChatModeStore from "@/stores/chatModeSlice";
 import {ChatMode} from "@/types/chat";
 import useTerminalStore from "@/stores/terminalSlice";
 import {getWebContainerInstance} from "../WeIde/services/webcontainer";
-import {useState} from "react";
+import {useState, useEffect} from "react";
 import {toast} from "react-toastify";
 import { apiUrl } from "@/api/base";
 import useUserStore from "@/stores/userSlice";
+import MergeTestPage from "../MergeTestPage";
 
 
 // 添加一个递归获取文件的辅助函数
@@ -68,6 +69,7 @@ export function HeaderActions() {
   const [showModal, setShowModal] = useState(false);
   const [deployUrl, setDeployUrl] = useState("");
   const [isDeploying, setIsDeploying] = useState(false);
+  const [showMergeTest, setShowMergeTest] = useState(false);
   const { isAuthenticated, logout } = useUserStore();
 
   const handleDownload = async () => {
@@ -90,6 +92,10 @@ export function HeaderActions() {
       console.error("下载失败:", error);
     }
   };
+  useEffect(() => {
+    // Debug: ensure HeaderActions mounted and button should be visible
+    console.log("[HeaderActions] mounted. showMergeTest =", showMergeTest);
+  }, [showMergeTest]);
   const publish = async () => {
     setIsDeploying(true);
     
@@ -150,6 +156,47 @@ export function HeaderActions() {
 
   return (
     <div className="flex items-center gap-2">
+      <span
+        id="header-actions-debug"
+        data-debug="header-actions"
+        style={{
+          backgroundColor: "#ff4d4f",
+          color: "#fff",
+          padding: "4px 8px",
+          borderRadius: "6px",
+          fontSize: "12px",
+        }}
+        title="HeaderActions debug badge"
+      >
+        HA
+      </span>
+      {/* Merge Test Button */}
+      <button
+        id="merge-test-button"
+        data-testid="merge-test-button"
+        onClick={() => {
+          console.log("[HeaderActions] merge button clicked");
+          setShowMergeTest(!showMergeTest);
+        }}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-lg transition-colors bg-purple-600 text-white hover:bg-purple-700 mr-3"
+        title="显示/隐藏 Merge 测试页面"
+      >
+        <svg
+          className="w-4 h-4"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          />
+        </svg>
+        <span className="whitespace-nowrap">Merge 测试</span>
+      </button>
+
       {mode === ChatMode.Builder && (
         <div className="flex items-center gap-2">
           <button
@@ -293,6 +340,30 @@ export function HeaderActions() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                 </svg>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Test Modal */}
+      {showMergeTest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-7xl w-full mx-4 max-h-[90vh] overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                CodeMirror Merge 测试
+              </h2>
+              <button
+                onClick={() => setShowMergeTest(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-auto max-h-[calc(90vh-80px)]">
+              <MergeTestPage />
             </div>
           </div>
         </div>
